@@ -1,6 +1,7 @@
 {:paths ["src"]
- :deps  {org.clojure/clojure       {:mvn/version "1.10.1"}
-         buddy/buddy-core          {:mvn/version "1.8.0"}
-         clj-http                  {:mvn/version "3.10.3"}
-         com.cognitect/transit-clj {:mvn/version "1.0.324"}
-         com.taoensso/timbre       {:mvn/version "5.1.0"}}}
+ :deps  {org.clojure/clojure            {:mvn/version "1.10.1"}
+         buddy/buddy-core               {:mvn/version "1.8.0"}
+         clj-http/clj-http              {:mvn/version "3.10.3"}
+         com.cognitect/transit-clj      {:mvn/version "1.0.324"}
+         org.clojars.mjdowney/excel-clj {:mvn/version "2.0.0"}
+         com.taoensso/timbre            {:mvn/version "5.1.0"}}}
