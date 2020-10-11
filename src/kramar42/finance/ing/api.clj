@@ -1,4 +1,4 @@
-(ns ing
+(ns kramar42.finance.ing.api
   (:require [buddy.core.hash :as hash]
             [buddy.core.codecs.base64 :as base64]
             [buddy.core.keys :as keys]
