@@ -1,19 +1,18 @@
 (ns ing
-  (:require
-    [buddy.core.hash :as hash]
-    [buddy.core.codecs.base64 :as base64]
-    [buddy.core.keys :as keys]
-    [buddy.core.dsa :as dsa]
-    [clj-http.client :as http]
-    [cognitect.transit :as transit]
-    [clojure.java.io :as io])
-  (:import
-    (java.time ZonedDateTime ZoneOffset)
-    (java.time.format DateTimeFormatter)
-    (java.util Locale UUID)
-    (java.io ByteArrayInputStream)))
+  (:require [buddy.core.hash :as hash]
+            [buddy.core.codecs.base64 :as base64]
+            [buddy.core.keys :as keys]
+            [buddy.core.dsa :as dsa]
+            [clj-http.client :as http]
+            [cognitect.transit :as transit]
+            [clojure.string :as str]
+            [taoensso.timbre :as log])
+  (:import (java.time ZonedDateTime ZoneOffset)
+           (java.time.format DateTimeFormatter)
+           (java.util Locale UUID)
+           (java.io ByteArrayInputStream)))
 
-(def endpoint "https://api.ing.com/oauth2/token")
+(def api-endpoint "https://api.ing.com")
 (def client-id (System/getenv "CLIENT_ID"))
 
 (def http-key (keys/private-key (System/getenv "HTTP_CERT_PATH")))
@@ -44,28 +43,53 @@
                  :alg :rsassa-pkcs15+sha256})
       base64-str))
 
-(defn auth-header [signature]
-  (format (str "Signature keyId=\"%s\",algorithm=\"rsa-sha256\""
-               ",headers=\"(request-target) date digest x-ing-reqid\",signature=\"%s\"")
-          client-id signature))
+(defn sign-headers [headers-map]
+  (let [headers-names (str/join " " (map name (keys headers-map)))
+        headers-vals  (str/join "\n" (map (fn [[k v]] (str (name k) ": " v)) headers-map))]
+    (println headers-vals)
+    (format (str "Signature keyId=\"%s\",algorithm=\"rsa-sha256\""
+                 ",headers=\"%s\",signature=\"%s\"")
+            client-id headers-names (sign headers-vals))))
 
-(defn token-request [endpoint]
-  (let [payload   "grant_type=client_credentials"
-        digest    (str "SHA-256=" (digest payload))
-        date      (date-str)
-        req-id    (rand-uuid)
-        to-sign   (format "(request-target): %s %s\ndate: %s\ndigest: %s\nx-ing-reqid: %s"
-                          "post" "/oauth2/token" date digest req-id)
-        signature (sign to-sign)]
-    (http/post endpoint
-               {:headers       {:content-type  "application/x-www-form-urlencoded"
-                                :x-ing-reqid   req-id
-                                :date          date
-                                :digest        digest
-                                :authorization (auth-header signature)}
-                :body          payload
-                :keystore      tls-ks-file
-                :keystore-pass tls-ks-pass})))
+(defn request-target [{:keys [api/method api/path api/query]}]
+  (str (name method) " " path (if query
+                                (str "?" (http/generate-query-string query))
+                                "")))
+
+(defn api-headers
+  [{:keys [api/payload api/auth api/headers] :as request}]
+  (let [date      (date-str)
+        digest    (str "SHA-256=" (digest (or payload "")))
+        headers   (merge {"(request-target)" (request-target request)
+                          :date              date
+                          :digest            digest
+                          :x-ing-reqid       (rand-uuid)}
+                         headers)
+        signature (sign-headers headers)]
+    (merge
+      {:content-type  "application/x-www-form-urlencoded"
+       :authorization (or auth signature)
+       :signature signature}
+      (dissoc headers "(request-target)"))))
+
+(defn api-request
+  [{:keys [api/method api/path api/query api/payload] :as request}]
+  {:pre [(every? some? [method path])]}
+  (http/request
+    {:method               method
+     :url                  (str api-endpoint path)
+     :query-params         query
+     :headers              (api-headers request)
+     :body                 payload
+     :keystore             tls-ks-file
+     :keystore-pass        tls-ks-pass
+     :unexceptional-status #{200 400 401}}))
+
+(defn token-request []
+  (api-request {:api/method  :post
+                :api/path    "/oauth2/token"
+                :api/payload (http/generate-query-string
+                               {:grant_type "client_credentials"})}))
 
 (defn str->stream [^String in]
   (new ByteArrayInputStream (.getBytes in)))
@@ -76,18 +100,24 @@
       (transit/reader :json)
       transit/read))
 
-(defn new-token [endpoint]
-  (-> endpoint
-      token-request
+(defn new-token []
+  (-> (token-request)
       :body
       parse-json
       (get "access_token")))
 
 (def access-token (atom nil))
 
-(defn reset-token []
-  (reset! access-token (new-token endpoint)))
+(defn reset-token [] (reset! access-token (new-token)))
 
 (comment
+  (token-request)
   (reset-token)
+  @access-token
+
+  (api-request {:api/method :get
+                :api/path   "/greetings/single"
+                :api/query  {:scope "greetings:view"}
+                :api/auth   (str "Bearer " @access-token)})
+
   )
